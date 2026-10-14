@@ -1,0 +1,20 @@
+{
+  "name": "actvox",
+  "owner": {
+    "name": "ActVox",
+    "email": "support@actvox.com"
+  },
+  "metadata": {
+    "description": "ActVox plugins for coding agents. Cursor is included. Claude can be added as its own plugin directory."
+  },
+  "plugins": [
+    {
+      "name": "actvox",
+      "source": "cursor",
+      "description": "Connect Cursor to an ActVox workspace. Read and update shared pages, tables, comments, and tasks with the permissions on your workspace API key.",
+      "homepage": "https://actvox.com",
+      "license": "MIT",
+      "keywords": ["actvox", "workspace", "mcp", "pages", "tasks"]
+    }
+  ]
+}

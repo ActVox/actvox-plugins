@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "actvox": {
+      "url": "https://api.actvox.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${ACTVOX_API_KEY}"
+      }
+    }
+  }
+}

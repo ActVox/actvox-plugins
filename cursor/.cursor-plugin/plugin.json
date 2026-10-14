@@ -1,0 +1,33 @@
+{
+  "name": "actvox",
+  "version": "1.0.0",
+  "description": "Connect Cursor to an ActVox workspace. Read and update shared pages, tables, comments, and tasks with the permissions on your workspace API key.",
+  "author": {
+    "name": "ActVox",
+    "email": "support@actvox.com"
+  },
+  "homepage": "https://actvox.com",
+  "license": "MIT",
+  "keywords": [
+    "actvox",
+    "workspace",
+    "mcp",
+    "pages",
+    "tasks"
+  ],
+  "logo": "assets/logo.png",
+  "variables": {
+    "type": "object",
+    "properties": {
+      "ACTVOX_API_KEY": {
+        "type": "string",
+        "title": "ActVox API key",
+        "description": "Workspace API key from ActVox Connectors \u2192 API keys. It must be bound to one workspace. Cursor sends it as the MCP Bearer token. Do not paste the key into chat."
+      }
+    },
+    "required": [
+      "ACTVOX_API_KEY"
+    ]
+  },
+  "repository": "https://github.com/ActVox/actvox-plugins"
+}
