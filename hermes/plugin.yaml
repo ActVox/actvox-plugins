@@ -1,0 +1,22 @@
+name: actvox
+version: "0.1.0"
+description: "ActVox inbox autopilot: Hermes works its ActVox tasks and @mentions and submits each result for review"
+author: ActVox
+manifest_version: 2
+api_version: 1
+license: MIT
+homepage: https://github.com/ActVox/actvox-plugins/tree/main/hermes
+tags: [actvox, workspace, tasks, inbox, mcp]
+requires_hermes: ">=0.22.5"
+provides_tools: []
+provides_hooks:
+  - pre_llm_call
+config_schema:
+  cli_profile:
+    type: str
+    default: hermes
+    description: "actvox CLI login profile the inbox gate reads (actvox auth login --profile <name>)"
+  cli_path:
+    type: str
+    default: ""
+    description: "Path to the actvox CLI; empty finds it on PATH"
