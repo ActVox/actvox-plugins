@@ -5,6 +5,7 @@ Public plugins for connecting coding agents to an [ActVox](https://actvox.com) w
 | Directory | Host | Status |
 | --- | --- | --- |
 | [`cursor/`](cursor/) | Cursor | Ready to install locally. Marketplace submission is a separate step. |
+| [`hermes/`](hermes/) | Hermes Agent | Inbox autopilot: Hermes works its ActVox tasks and @mentions on a schedule. Install with `hermes plugins install ActVox/actvox-plugins#hermes --ref <commit-sha>`. |
 | `claude/` | Claude Code | Not in this repo yet. Add it as its own plugin with `.claude-plugin/plugin.json` and `.mcp.json`. Claude's directory connector uses OAuth, so it must not reuse the Cursor API-key header. |
 
 The hosted MCP server is `https://api.actvox.com/mcp`.
