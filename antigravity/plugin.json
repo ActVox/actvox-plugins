@@ -1,0 +1,5 @@
+{
+  "$schema": "https://antigravity.google/schemas/v1/plugin.json",
+  "name": "actvox",
+  "description": "Connect Antigravity to an ActVox workspace. Read and update shared pages, databases, comments and tasks with the access you approve."
+}
