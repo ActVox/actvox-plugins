@@ -16,7 +16,7 @@ import shutil
 from pathlib import Path
 from typing import Any, Callable
 
-from . import actvox_inbox, actvox_setup
+from . import actvox_gate, actvox_inbox, actvox_setup
 
 PLUGIN_NAME = "actvox"
 PLUGIN_DIR = Path(__file__).resolve().parent
@@ -25,7 +25,11 @@ DEFAULT_EVERY = "15m"
 
 
 def _paths() -> tuple[Path, Path]:
-    """`(scripts_dir, gate_state_path)` for the active profile."""
+    """`(scripts_dir, gate_state_path)` for the active profile.
+
+    `plugin_data_dir` is documented as `<hermes home>/plugin-data/<name>/`, so its grandparent
+    is the profile's HERMES_HOME (where cron looks for `scripts/`).
+    """
     from plugins.plugin_storage import plugin_data_dir
 
     data_dir = Path(plugin_data_dir(PLUGIN_NAME))
@@ -58,7 +62,7 @@ def _make_cli_handler(ctx: Any, out: Callable[[str], None] = print) -> Callable[
         scripts_dir, state_path = _paths()
         if command == "install-gate":
             if not cli:
-                out("The actvox CLI is not on PATH. Install it (npm i -g @actvox/cli) or pass --cli <path>.")
+                out(f"The actvox CLI is not on PATH. Install it ({actvox_gate.CLI_INSTALL}) or pass --cli <path>.")
                 return 1
             try:
                 target = actvox_setup.install_gate(scripts_dir, plugin_dir=PLUGIN_DIR, cli=cli,

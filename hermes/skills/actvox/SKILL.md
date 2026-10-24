@@ -31,7 +31,7 @@ that workspace. Do not create either page only to look around.
 
 ## Writes
 
-A read-only request makes no remote writes: no pages, comments, memory or imports.
+A read-only request makes no remote writes: no pages, comments, memory, imports or standing documents.
 
 When the person asks for a specific change, make that change. When they ask to explore or
 to see options, propose the object and the edit, then wait.

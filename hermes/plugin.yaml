@@ -1,5 +1,5 @@
 name: actvox
-version: "0.1.0"
+version: "0.1.1"
 description: "ActVox inbox autopilot: Hermes works its ActVox tasks and @mentions and submits each result for review"
 author: ActVox
 manifest_version: 2

@@ -7,19 +7,23 @@ next command. The MCP sign-in and the allowlist are checked in a session with
 from __future__ import annotations
 
 import json
-import os
 import subprocess
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+try:  # loaded as the plugin package by Hermes
+    from . import actvox_gate, actvox_inbox
+except ImportError:  # loaded as top-level modules by the tests
+    import actvox_gate  # type: ignore[no-redef]
+    import actvox_inbox  # type: ignore[no-redef]
+
 GATE_SCRIPT_NAME = "actvox-inbox-gate.py"
 SHIM_MARKER = "# actvox-hermes-plugin gate shim v1"
 CRON_JOB_NAME = "actvox-inbox"
-WORKER_SKILL = "actvox:actvox-inbox"
+WORKER_SKILL = actvox_inbox.WORKER_SKILL
 WORKER_PROMPT = (
-    "Work the ActVox inbox items that the script output above lists, with the actvox:actvox-inbox "
+    f"Work the ActVox inbox items that the script output above lists, with the {WORKER_SKILL} "
     "skill. If none needs you, reply exactly [SILENT]."
 )
 CLI_TIMEOUT_SECONDS = 20
@@ -61,21 +65,13 @@ def install_gate(scripts_dir: Path, *, plugin_dir: Path, cli: str, profile: str,
     target = Path(scripts_dir) / GATE_SCRIPT_NAME
     if target.exists() and SHIM_MARKER not in target.read_text(encoding="utf-8", errors="replace"):
         raise FileExistsError(f"{target} exists and was not written by this plugin; move it away first")
-    target.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=target.parent, prefix=".actvox-gate.", suffix=".py")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(render_shim(plugin_dir=plugin_dir, cli=cli, profile=profile, state=state))
-        os.chmod(tmp, 0o644)
-        os.replace(tmp, target)
-    except BaseException:
-        Path(tmp).unlink(missing_ok=True)
-        raise
+    actvox_gate.write_text_atomic(target, render_shim(plugin_dir=plugin_dir, cli=cli, profile=profile, state=state),
+                                  mode=0o644)
     return target
 
 
 def _auth_status(cli: str, profile: str, run: Callable[..., Any]) -> Optional[dict[str, Any]]:
-    cmd = [cli, "auth", "status", "--json"] + (["--profile", profile] if profile else [])
+    cmd = actvox_gate.cli_command(cli, profile, "auth", "status", "--json")
     try:
         proc = run(cmd, capture_output=True, text=True, timeout=CLI_TIMEOUT_SECONDS, check=False)
         payload = json.loads(proc.stdout or "")
@@ -91,11 +87,11 @@ def checklist(*, cli: str, profile: str, scripts_dir: Path, state_path: Path,
     checks: list[Check] = []
     has_cli = bool(cli) and Path(cli).exists()
     checks.append(Check("cli", has_cli, f"ActVox CLI: {cli}" if has_cli else "ActVox CLI: not found",
-                        "" if has_cli else "npm i -g @actvox/cli"))
+                        "" if has_cli else actvox_gate.CLI_INSTALL))
     status = _auth_status(cli, profile, run) if has_cli else None
     if status and status.get("authenticated"):
         count = len(status.get("workspaceIds") or [])
-        workspaces = f"{count} workspace" if count == 1 else f"{count} workspaces"
+        workspaces = actvox_inbox.plural(count, "workspace", "workspaces")
         checks.append(Check("login", True, f"CLI login ({status.get('profile', profile)}): {workspaces}"))
     else:
         checks.append(Check("login", False, "CLI login: not signed in", login_fix))
@@ -133,9 +129,9 @@ def setup_text(checks: list[Check], *, every: str) -> str:
     lines += [
         "",
         "Hosted MCP (Hermes writes through it). Run once, then check in a session with /actvox status:",
-        "  hermes mcp add actvox --url https://api.actvox.com/mcp --auth oauth",
-        "  hermes mcp login actvox",
-        "  hermes config set plugins.entries.actvox.mcp_allowlist '[\"actvox\"]'",
+        f"  {actvox_inbox.MCP_ADD}",
+        f"  {actvox_inbox.MCP_LOGIN}",
+        f"  {actvox_inbox.ALLOWLIST_FIX}",
         "",
         "The inbox worker (after the gate script is installed):",
         f"  {cron_create_command(every)}",

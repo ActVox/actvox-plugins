@@ -17,11 +17,10 @@ except ImportError:  # loaded as a top-level module by the tests
 SERVER = "actvox"
 NOTE_TIMEOUT_SECONDS = 5
 COMMAND_TIMEOUT_SECONDS = 20
+MCP_ADD = "hermes mcp add actvox --url https://api.actvox.com/mcp --auth oauth"
+MCP_LOGIN = "hermes mcp login actvox"
 ALLOWLIST_FIX = "hermes config set plugins.entries.actvox.mcp_allowlist '[\"actvox\"]'"
-MCP_FIX = (
-    "hermes mcp add actvox --url https://api.actvox.com/mcp --auth oauth, "
-    "then hermes mcp login actvox, then /reload-mcp"
-)
+MCP_FIX = f"{MCP_ADD}, then {MCP_LOGIN}, then /reload-mcp"
 WORKER_SKILL = "actvox:actvox-inbox"
 
 
@@ -40,7 +39,7 @@ def mcp_data(envelope: Any) -> Optional[dict[str, Any]]:
     return None
 
 
-def _plural(count: int, one: str, many: str) -> str:
+def plural(count: int, one: str, many: str) -> str:
     return f"{count} {one if count == 1 else many}"
 
 
@@ -51,15 +50,15 @@ def note_text(items: list[dict[str, str]]) -> Optional[str]:
     if not items:
         return None
     parts = [part for part in (
-        _plural(tasks, "task", "tasks") if tasks else "",
-        _plural(mentions, "mention", "mentions") if mentions else "",
+        plural(tasks, "task", "tasks") if tasks else "",
+        plural(mentions, "mention", "mentions") if mentions else "",
     ) if part]
     verb = "waits" if len(items) == 1 else "wait"
     return (f"ActVox: {' and '.join(parts)} {verb} for you. To work them, load the skill "
-            f"{WORKER_SKILL} (the person can also type /actvox inbox).")
+            f"{WORKER_SKILL} (the person can list them with /actvox inbox).")
 
 
-def call(ctx: Any, tool: str, arguments: dict[str, Any], timeout: float) -> tuple[Optional[dict[str, Any]], Optional[str]]:
+def call_actvox(ctx: Any, tool: str, arguments: dict[str, Any], timeout: float) -> tuple[Optional[dict[str, Any]], Optional[str]]:
     """`(data, problem)`: the tool's object, or a sentence that names the fix."""
     try:
         envelope = ctx.call_mcp(SERVER, tool, arguments, timeout=timeout)
@@ -81,7 +80,7 @@ def make_session_note(ctx: Any, now: Callable[[], float] = time.time) -> Callabl
     def on_pre_llm_call(*, is_first_turn: bool = False, **_kwargs: Any) -> Optional[str]:
         if not is_first_turn or ctx.current_cron_execution() is not None:
             return None
-        data, _problem = call(ctx, "check_inbox", {"limit": 5}, NOTE_TIMEOUT_SECONDS)
+        data, _problem = call_actvox(ctx, "check_inbox", {"limit": 5}, NOTE_TIMEOUT_SECONDS)
         if data is None:
             return None  # never block or clutter a turn because ActVox is unreachable
         workspaces = [ws for ws in data.get("workspaces") or [] if isinstance(ws, dict)]
@@ -105,7 +104,7 @@ def inbox_report(data: dict[str, Any], now: float) -> str:
         pending = actvox_gate.pending_in_workspaces([ws], now)
         tasks = [item for item in pending if item["kind"] == "assignment"]
         mentions = [item for item in pending if item["kind"] == "mention"]
-        lines.append(f"{name}: {_plural(len(tasks), 'task', 'tasks')}, {_plural(len(mentions), 'mention', 'mentions')} to act on")
+        lines.append(f"{name}: {plural(len(tasks), 'task', 'tasks')}, {plural(len(mentions), 'mention', 'mentions')} to act on")
         lines.extend(f"  task {item['id']} · {item['state']}" for item in tasks)
         lines.extend(f"  mention {item['id']}" for item in mentions)
     if not lines:
@@ -114,11 +113,12 @@ def inbox_report(data: dict[str, Any], now: float) -> str:
 
 
 def status_report(ctx: Any) -> str:
-    data, problem = call(ctx, "doctor", {}, COMMAND_TIMEOUT_SECONDS)
+    data, problem = call_actvox(ctx, "doctor", {}, COMMAND_TIMEOUT_SECONDS)
     if data is None:
         return f"ActVox: not ready. {problem}"
     connection = data.get("connection") or {}
-    lines = [f"ActVox: connected to {data.get('apiUrl', 'ActVox')} (ok={bool(data.get('ok'))})."]
+    lines = [f"ActVox: connected to {data.get('apiUrl', 'ActVox')} (ok={bool(data.get('ok'))}).",
+             "  Plugin MCP access (mcp_allowlist): granted · MCP sign-in: working"]
     for ws in connection.get("workspaces") or []:
         if not isinstance(ws, dict):
             continue
@@ -137,7 +137,7 @@ def make_command(ctx: Any, now: Callable[[], float] = time.time) -> Callable[...
         if verb == "status":
             return status_report(ctx)
         if verb == "inbox":
-            data, problem = call(ctx, "check_inbox", {"limit": 10}, COMMAND_TIMEOUT_SECONDS)
+            data, problem = call_actvox(ctx, "check_inbox", {"limit": 10}, COMMAND_TIMEOUT_SECONDS)
             return inbox_report(data, now()) if data is not None else f"ActVox: not ready. {problem}"
         return "Usage: /actvox [inbox|status]"
 

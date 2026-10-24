@@ -121,7 +121,7 @@ With `plugins.isolation: host`, Hermes does not add plugin terminal commands, so
 ## Develop
 
 ```bash
-uv run --no-project --with pytest python -m pytest tests -q
+uv run --no-project --with 'pytest>=8,<10' python -m pytest tests -q
 hermes plugins validate . --install-deps
 ```
 

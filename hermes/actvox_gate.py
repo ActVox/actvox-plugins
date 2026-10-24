@@ -8,8 +8,9 @@ Rules this file keeps:
 
 - Standard library only: the shim imports it outside the Hermes plugin runtime.
 - Always exit 0. Hermes honours `wakeAgent: false` only from a script that succeeded; a
-  failing gate would wake the model on every tick. A failure wakes the agent once, so it can
-  tell the person, and is then silent until a healthy tick.
+  failing gate would wake the model on every tick. A CLI failure wakes the agent once, so it
+  can tell the person, and is then silent until a healthy tick. Any other failure (a bad
+  state file, a full disk) prints `wakeAgent: false`.
 - The context is ids, kinds and states only: no comment text and no titles. The worker
   reads the items through MCP, and user text never reaches the cron prompt scanner.
 - Nothing here writes to ActVox.
@@ -34,12 +35,33 @@ OWNER_STATES = frozenset({"assigned", "acknowledged", "changes_requested", "clai
 # the worker asks a person in the thread and the gate stops waking for that item.
 BACKOFF_SECONDS = (15 * 60, 60 * 60, 6 * 60 * 60)
 CLI_TIMEOUT_SECONDS = 30
+CLI_INSTALL = "npm i -g @actvox/cli"
 STATE_VERSION = 1
 MAX_ERROR_CHARS = 200
 
 
 def empty_state() -> dict[str, Any]:
     return {"version": STATE_VERSION, "items": {}, "lastError": None}
+
+
+def cli_command(cli: str, profile: str, *args: str) -> list[str]:
+    """`actvox <args…>` for the given login profile (none: the CLI's default)."""
+    return [cli, *args] + (["--profile", profile] if profile else [])
+
+
+def write_text_atomic(path: Path, text: str, *, mode: Optional[int] = None) -> None:
+    """Replace `path` in one step, so a reader never sees half a file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        if mode is not None:
+            os.chmod(tmp, mode)
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
 
 
 def _iso_seconds(value: Any) -> Optional[float]:
@@ -51,61 +73,101 @@ def _iso_seconds(value: Any) -> Optional[float]:
         return None
 
 
-def _list(container: Any, key: str) -> list[dict[str, Any]]:
+def _records(container: Any, key: str) -> list[dict[str, Any]]:
+    """`container[key]` when it is a list, keeping only its objects."""
     items = container.get(key) if isinstance(container, dict) else None
     return [item for item in items if isinstance(item, dict)] if isinstance(items, list) else []
-
-
-def pending_items(payload: dict[str, Any], now: float) -> list[dict[str, str]]:
-    """The items Hermes should act on, from `actvox inbox --all --json`."""
-    data = payload.get("data") if isinstance(payload, dict) else None
-    return pending_in_workspaces(_list(data, "workspaces"), now)
-
-
-def pending_in_workspaces(workspaces: list[dict[str, Any]], now: float) -> list[dict[str, str]]:
-    """The same rule over a list of inbox workspaces: the CLI's `data.workspaces` or the
-    hosted MCP `check_inbox` result's `workspaces` (same inner shapes)."""
-    items: list[dict[str, str]] = []
-    for ws in workspaces:
-        if ws.get("skipped") or ws.get("error") or ws.get("assignable") is False:
-            continue
-        workspace_id = str(ws.get("workspaceId") or "")
-        for mention in _list(ws.get("mentions"), "mentions"):
-            if mention.get("id") and not mention.get("acknowledgedAt"):
-                items.append({"kind": "mention", "id": str(mention["id"]), "workspaceId": workspace_id})
-        for task in _list(ws.get("assignments"), "assignments"):
-            state = task.get("state")
-            if task.get("role") != "owner" or state not in OWNER_STATES or not task.get("id"):
-                continue
-            if not task.get("nextActions"):
-                continue
-            if state == "claimed":
-                expires = _iso_seconds((task.get("lease") or {}).get("expiresAt"))
-                if expires is not None and expires > now:
-                    continue  # the claim is alive: Hermes is still working on it
-            items.append({"kind": "assignment", "id": str(task["id"]), "workspaceId": workspace_id, "state": str(state)})
-    return items
 
 
 def _key(item: dict[str, str]) -> str:
     return f"{item['kind']}:{item['workspaceId']}:{item['id']}"
 
 
-def decide(items: list[dict[str, str]], state: dict[str, Any], now: float):
-    """Return `(wake, context, new_state)` for one healthy tick."""
+def _key_workspace(key: str) -> str:
+    parts = key.split(":", 2)
+    return parts[1] if len(parts) == 3 else ""
+
+
+def scan_workspaces(workspaces: list[dict[str, Any]], now: float) -> tuple[list[dict[str, str]], set[str], set[str]]:
+    """`(pending, in_progress, unread)` over a list of inbox workspaces: the CLI's
+    `data.workspaces` or the hosted MCP `check_inbox` result's `workspaces` (same shapes).
+
+    - pending: the items Hermes should act on now.
+    - in_progress: keys of tasks Hermes claimed whose lease is still alive.
+    - unread: ids of workspaces that answered with an error or were skipped this tick.
+    """
+    pending: list[dict[str, str]] = []
+    in_progress: set[str] = set()
+    unread: set[str] = set()
+    for ws in workspaces:
+        workspace_id = str(ws.get("workspaceId") or "")
+        if ws.get("skipped") or ws.get("error"):
+            unread.add(workspace_id)
+            continue
+        if ws.get("assignable") is False:
+            continue
+        for mention in _records(ws.get("mentions"), "mentions"):
+            if mention.get("id") and not mention.get("acknowledgedAt"):
+                pending.append({"kind": "mention", "id": str(mention["id"]), "workspaceId": workspace_id})
+        for task in _records(ws.get("assignments"), "assignments"):
+            state = task.get("state")
+            if task.get("role") != "owner" or state not in OWNER_STATES or not task.get("id"):
+                continue
+            if not task.get("nextActions"):
+                continue
+            item = {"kind": "assignment", "id": str(task["id"]), "workspaceId": workspace_id, "state": str(state)}
+            if state == "claimed":
+                expires = _iso_seconds((task.get("lease") or {}).get("expiresAt"))
+                if expires is not None and expires > now:
+                    in_progress.add(_key(item))  # the claim is alive: Hermes is still working on it
+                    continue
+            pending.append(item)
+    return pending, in_progress, unread
+
+
+def pending_in_workspaces(workspaces: list[dict[str, Any]], now: float) -> list[dict[str, str]]:
+    """The items Hermes should act on now (see `scan_workspaces`)."""
+    return scan_workspaces(workspaces, now)[0]
+
+
+def pending_items(payload: dict[str, Any], now: float) -> list[dict[str, str]]:
+    """The items Hermes should act on, from `actvox inbox --all --json`."""
+    data = payload.get("data") if isinstance(payload, dict) else None
+    return pending_in_workspaces(_records(data, "workspaces"), now)
+
+
+def _entry(value: Any) -> Optional[dict[str, Any]]:
+    """A stored item entry with numbers that parse, or None (then the item counts as new)."""
+    if not isinstance(value, dict):
+        return None
+    try:
+        return {"attempts": int(value.get("attempts", 0)), "lastWokenAt": float(value.get("lastWokenAt", 0)),
+                "stuck": bool(value.get("stuck"))}
+    except (TypeError, ValueError):
+        return None
+
+
+def decide(items: list[dict[str, str]], state: dict[str, Any], now: float, *,
+           in_progress: frozenset[str] | set[str] = frozenset(),
+           unread_workspaces: frozenset[str] | set[str] = frozenset()) -> tuple[bool, Optional[dict[str, list]], dict[str, Any]]:
+    """Return `(wake, context, new_state)` for one healthy tick.
+
+    An entry is kept, unchanged, while its task is in progress or its workspace was not read
+    this tick; any other entry whose item left the inbox is dropped.
+    """
     known = state.get("items") if isinstance(state.get("items"), dict) else {}
     new_items: dict[str, Any] = {}
     context: dict[str, list] = {"mentions": [], "assignments": [], "stuck": []}
     for item in items:
         key = _key(item)
-        entry = known.get(key) if isinstance(known.get(key), dict) else None
-        attempts = int(entry.get("attempts", 0)) if entry else 0
-        if entry and entry.get("stuck"):
+        entry = _entry(known.get(key))
+        attempts = entry["attempts"] if entry else 0
+        if entry and entry["stuck"]:
             new_items[key] = entry
             continue
         if entry and attempts >= 1:
             wait = BACKOFF_SECONDS[min(attempts, len(BACKOFF_SECONDS)) - 1]
-            if now < float(entry.get("lastWokenAt", 0)) + wait:
+            if now < entry["lastWokenAt"] + wait:
                 new_items[key] = entry
                 continue
         attempts += 1
@@ -117,6 +179,12 @@ def decide(items: list[dict[str, str]], state: dict[str, Any], now: float):
             context["mentions"].append({"id": item["id"], "workspaceId": item["workspaceId"]})
         else:
             context["assignments"].append({"id": item["id"], "workspaceId": item["workspaceId"], "state": item["state"]})
+    for key, value in known.items():
+        if key in new_items or (key not in in_progress and _key_workspace(key) not in unread_workspaces):
+            continue
+        entry = _entry(value)
+        if entry:
+            new_items[key] = entry
     new_state = {"version": STATE_VERSION, "items": new_items, "lastError": None}
     wake = any(context.values())
     return wake, (context if wake else None), new_state
@@ -133,15 +201,7 @@ def load_state(path: Path) -> dict[str, Any]:
 
 
 def save_state(path: Path, state: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".gate-state.", suffix=".json")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(state, handle)
-        os.replace(tmp, path)
-    except BaseException:
-        Path(tmp).unlink(missing_ok=True)
-        raise
+    write_text_atomic(path, json.dumps(state))
 
 
 class GateError(Exception):
@@ -152,11 +212,11 @@ class GateError(Exception):
 
 
 def read_inbox(cli: str, profile: str, run: Callable[..., Any]) -> dict[str, Any]:
-    cmd = [cli, "inbox", "--all", "--json"] + (["--profile", profile] if profile else [])
+    cmd = cli_command(cli, profile, "inbox", "--all", "--json")
     try:
         proc = run(cmd, capture_output=True, text=True, timeout=CLI_TIMEOUT_SECONDS, check=False)
     except FileNotFoundError:
-        raise GateError("cli_missing", "The actvox CLI is not installed. Run: npm i -g @actvox/cli") from None
+        raise GateError("cli_missing", f"The actvox CLI is not installed. Run: {CLI_INSTALL}") from None
     except subprocess.TimeoutExpired:
         raise GateError("cli_timeout", f"actvox inbox did not answer in {CLI_TIMEOUT_SECONDS} s") from None
     try:
@@ -168,6 +228,28 @@ def read_inbox(cli: str, profile: str, run: Callable[..., Any]) -> dict[str, Any
         error = error if isinstance(error, dict) else {}
         raise GateError(str(error.get("code") or "cli_failed"), str(error.get("message") or f"actvox inbox exited {proc.returncode}"))
     return payload
+
+
+def _tick(args: argparse.Namespace, run: Callable[..., Any], now: float, stderr: Callable[[str], None]) -> dict[str, Any]:
+    """The one JSON object this tick prints."""
+    state_path = Path(args.state)
+    state = load_state(state_path)
+    try:
+        payload = read_inbox(args.cli, args.profile, run)
+    except GateError as exc:
+        stderr(f"actvox gate: {exc.code}: {exc.message}")
+        first = not state.get("lastError")
+        state["lastError"] = {"code": exc.code, "message": exc.message, "at": now}
+        save_state(state_path, state)
+        if not first:
+            return {"wakeAgent": False}
+        context = {"gateError": {"code": exc.code, "message": exc.message}, "mentions": [], "assignments": [], "stuck": []}
+        return {"wakeAgent": True, "context": context}
+    data = payload.get("data") if isinstance(payload, dict) else None
+    pending, in_progress, unread = scan_workspaces(_records(data, "workspaces"), now)
+    wake, context, new_state = decide(pending, state, now, in_progress=in_progress, unread_workspaces=unread)
+    save_state(state_path, new_state)  # before waking: an unsaved wake would repeat on every tick
+    return {"wakeAgent": True, "context": context} if wake else {"wakeAgent": False}
 
 
 def main(
@@ -183,25 +265,12 @@ def main(
     parser.add_argument("--profile", default="")
     parser.add_argument("--state", required=True)
     args = parser.parse_args(argv)
-    state_path = Path(args.state)
-    state = load_state(state_path)
-    tick = now()
     try:
-        payload = read_inbox(args.cli, args.profile, run)
-    except GateError as exc:
-        stderr(f"actvox gate: {exc.code}: {exc.message}")
-        first = not state.get("lastError")
-        state["lastError"] = {"code": exc.code, "message": exc.message, "at": tick}
-        save_state(state_path, state)
-        if first:
-            context = {"gateError": {"code": exc.code, "message": exc.message}, "mentions": [], "assignments": [], "stuck": []}
-            stdout(json.dumps({"wakeAgent": True, "context": context}))
-        else:
-            stdout(json.dumps({"wakeAgent": False}))
-        return 0
-    wake, context, new_state = decide(pending_items(payload, tick), state, tick)
-    save_state(state_path, new_state)
-    stdout(json.dumps({"wakeAgent": True, "context": context} if wake else {"wakeAgent": False}))
+        line = _tick(args, run, now(), stderr)
+    except Exception as exc:  # never fail: Hermes would wake the model on every tick
+        stderr(f"actvox gate: unexpected error, not waking: {exc!r}")
+        line = {"wakeAgent": False}
+    stdout(json.dumps(line))
     return 0
 
 
