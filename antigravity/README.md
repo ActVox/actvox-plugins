@@ -7,9 +7,10 @@ The plugin holds no key. Antigravity signs in with OAuth. ActVox identifies Anti
 ## Install
 
 ```bash
-git clone https://github.com/ActVox/actvox-plugins.git
-agy plugin install "$PWD/actvox-plugins/antigravity"
+agy plugin install https://github.com/ActVox/actvox-plugins/tree/main/antigravity
 ```
+
+From a local clone: `agy plugin install "$PWD/actvox-plugins/antigravity"`.
 
 Then sign in:
 
@@ -24,7 +25,7 @@ Without the plugin, add only the server: `agy mcp add actvox https://api.actvox.
 
 ## Update and remove
 
-Pull the repository, then run the install command again. Remove with `agy plugin uninstall actvox`.
+Run the install command again. Remove with `agy plugin uninstall actvox`.
 
 ## What the agent is told
 
