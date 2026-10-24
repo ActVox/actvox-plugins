@@ -1,0 +1,11 @@
+{
+  "name": "actvox",
+  "version": "1.0.0",
+  "description": "Connect Gemini CLI to an ActVox workspace. Read and update shared pages, databases, comments and tasks with the access you approve.",
+  "mcpServers": {
+    "actvox": {
+      "httpUrl": "https://api.actvox.com/mcp"
+    }
+  },
+  "contextFileName": "GEMINI.md"
+}
