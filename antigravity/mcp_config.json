@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "actvox": {
+      "serverUrl": "https://api.actvox.com/mcp"
+    }
+  }
+}

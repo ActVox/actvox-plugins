@@ -8,6 +8,7 @@ Public plugins for connecting coding agents to an [ActVox](https://actvox.com) w
 | [`hermes/`](hermes/) | Hermes Agent | Inbox autopilot: Hermes works its ActVox tasks and @mentions on a schedule. Install with `hermes plugins install ActVox/actvox-plugins#hermes --ref <commit-sha>`. |
 | `claude/` | Claude Code | Not in this repo yet. Add it as its own plugin with `.claude-plugin/plugin.json` and `.mcp.json`. Claude's directory connector uses OAuth, so it must not reuse the Cursor API-key header. |
 | repository root | Gemini CLI | Extension: [`gemini-extension.json`](gemini-extension.json) and [`GEMINI.md`](GEMINI.md). See [Gemini CLI](#gemini-cli). |
+| [`antigravity/`](antigravity/) | Antigravity (app and `agy` CLI) | Plugin: the `actvox` MCP server and skill. Install with `agy plugin install https://github.com/ActVox/actvox-plugins/tree/main/antigravity`; see [its README](antigravity/README.md). |
 
 The hosted MCP server is `https://api.actvox.com/mcp`.
 
@@ -30,7 +31,7 @@ The repository root is a Gemini CLI extension. It adds the `actvox` MCP server a
    The browser opens the ActVox sign-in. Pick the workspace and approve.
 3. Check the connection with `/mcp`. The `actvox` server shows its tools.
 
-Gemini CLI serves enterprise Gemini Code Assist licenses and Gemini API keys. Since 2026-06-18 it no longer serves personal Google accounts; those accounts use Antigravity CLI.
+Gemini CLI serves enterprise Gemini Code Assist licenses and Gemini API keys. Since 2026-06-18 it no longer serves personal Google accounts; those accounts use Antigravity CLI and the [`antigravity/`](antigravity/) plugin.
 
 Update with `gemini extensions update actvox`. Remove with `gemini extensions uninstall actvox`.
 
